@@ -17,9 +17,10 @@ package com.netflix.spinnaker.rosco.controllers;
 
 import static com.netflix.spinnaker.kork.common.Header.USER;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultHandlers.print;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.setup.MockMvcBuilders.webAppContextSetup;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -35,12 +36,18 @@ import com.netflix.spinnaker.rosco.jobs.JobRequest;
 import com.netflix.spinnaker.rosco.manifests.helm.HelmBakeManifestRequest;
 import com.netflix.spinnaker.rosco.services.ClouddriverService;
 import java.nio.charset.StandardCharsets;
+import java.util.Set;
+import okhttp3.*;
+import okhttp3.mockwebserver.MockWebServer;
+import org.junit.Rule;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
@@ -52,6 +59,8 @@ import retrofit.mime.TypedByteArray;
 @SpringBootTest(classes = Main.class)
 @TestPropertySource(properties = "spring.application.name = rosco")
 class V2BakeryControllerWithClouddriverServiceTest {
+
+  @Rule public final MockWebServer server = new MockWebServer();
 
   private MockMvc webAppMockMvc;
 
@@ -66,6 +75,8 @@ class V2BakeryControllerWithClouddriverServiceTest {
 
   /** Prevent attempts to invoke a local binary (e.g. helm) */
   @MockBean JobExecutor jobExecutor;
+
+  @SpyBean OkHttpClient okHttpClient;
 
   /**
    * This takes X-SPINNAKER-* headers from requests to rosco and puts them in the MDC. This is
@@ -111,6 +122,10 @@ class V2BakeryControllerWithClouddriverServiceTest {
     when(jobExecutor.startJob(any(JobRequest.class))).thenReturn(jobId);
     when(jobExecutor.updateJob(jobId)).thenReturn(bakeStatus);
 
+    Call spyCall = spy(Call.class);
+    when(spyCall.execute()).thenReturn(successfulResponse2(""));
+    when(okHttpClient.newCall(any(Request.class))).thenReturn(spyCall);
+
     // Simulate a successful response from clouddriver.  The actual response
     // isn't important since we're verifying headers in the request to
     // clouddriver.
@@ -125,13 +140,17 @@ class V2BakeryControllerWithClouddriverServiceTest {
                 .header(
                     USER.getHeader(), userValue) // arbitrary spinnaker (i.e. X-SPINNAKER-*) header
                 .content(objectMapper.writeValueAsString(bakeManifestRequest)))
-        .andDo(print());
-    //        .andExpect(status().isOk());
+        .andDo(print())
+        .andExpect(status().isOk());
 
     // Make sure the request to clouddriver has the same headers as the request
     // to rosco
-    //        ArgumentCaptor<Request> requestCaptor = ArgumentCaptor.forClass(Request.class);
-    //    verify(ok3Client).execute(requestCaptor.capture());
+    ArgumentCaptor<Request> requestCaptor = ArgumentCaptor.forClass(Request.class);
+    verify(okHttpClient, times(2)).newCall(requestCaptor.capture());
+    verify(spyCall).execute();
+    Headers headers = requestCaptor.getValue().headers();
+    Set<String> names = headers.names();
+    System.out.println("headers: " + names);
     //    List<Header> headers = requestCaptor.getValue().getHeaders();
     //    Header header = Iterables.getOnlyElement(headers);
     //    assertEquals(USER.getHeader(), header.getName());
@@ -145,5 +164,15 @@ class V2BakeryControllerWithClouddriverServiceTest {
         "",
         ImmutableList.of(),
         new TypedByteArray(null, content.getBytes()));
+  }
+
+  private okhttp3.Response successfulResponse2(String content) {
+    return new okhttp3.Response.Builder()
+        .request(new Request.Builder().url("http://localhost:7002/artifact/fetch").build())
+        .code(HttpStatus.OK.value())
+        .message("")
+        .protocol(Protocol.HTTP_1_1)
+        .body(ResponseBody.create(okhttp3.MediaType.parse("application/json"), content))
+        .build();
   }
 }

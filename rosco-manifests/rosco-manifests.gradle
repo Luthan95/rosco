@@ -21,7 +21,6 @@ dependencies {
   testImplementation "org.junit.platform:junit-platform-runner"
   testImplementation "org.junit.vintage:junit-vintage-engine"
   testImplementation "org.mockito:mockito-core"
-  testImplementation "org.mockito:mockito-inline"
   testImplementation "org.spockframework:spock-core"
   testImplementation "com.squareup.retrofit2:converter-jackson"
 }
